@@ -1,0 +1,96 @@
+# -------------------------------------------------------------------------
+# 1. Default text normalization
+# -------------------------------------------------------------------------
+# Keep repository text normalized. Prefer LF for cross-platform projects.
+* text=auto eol=lf
+# -------------------------------------------------------------------------
+# 2. Unity / C# / Project text files
+# -------------------------------------------------------------------------
+*.cs                    text eol=lf
+*.asmdef                text eol=lf
+*.asmref                text eol=lf
+*.shader                text eol=lf
+*.cginc                 text eol=lf
+*.hlsl                  text eol=lf
+*.compute               text eol=lf
+*.json                  text eol=lf
+*.xml                   text eol=lf
+*.yaml                  text eol=lf
+*.yml                   text eol=lf
+*.txt                   text eol=lf
+*.md                    text eol=lf
+# Unity serialized text assets
+*.meta                  text eol=lf
+*.unity                 text eol=lf merge=unityyamlmerge
+*.prefab                text eol=lf merge=unityyamlmerge
+*.mat                   text eol=lf merge=unityyamlmerge
+*.anim                  text eol=lf merge=unityyamlmerge
+*.controller            text eol=lf merge=unityyamlmerge
+*.overrideController    text eol=lf merge=unityyamlmerge
+*.asset                 text eol=lf merge=unityyamlmerge
+*.playable              text eol=lf merge=unityyamlmerge
+*.mask                  text eol=lf merge=unityyamlmerge
+*.spriteatlas           text eol=lf merge=unityyamlmerge
+*.renderTexture         text eol=lf merge=unityyamlmerge
+*.physicMaterial        text eol=lf merge=unityyamlmerge
+*.physicsMaterial2D     text eol=lf merge=unityyamlmerge
+*.lighting              text eol=lf merge=unityyamlmerge
+*.inputactions          text eol=lf merge=unityyamlmerge
+*.uxml                  text eol=lf
+*.uss                   text eol=lf
+# Shell scripts should stay LF
+*.sh                    text eol=lf
+# Optional Windows-specific generated files
+*.sln                   text eol=crlf
+*.csproj                text eol=crlf
+# -------------------------------------------------------------------------
+# 3. Git LFS - large / binary assets
+# -------------------------------------------------------------------------
+# Images and source art
+*.psd                   filter=lfs diff=lfs merge=lfs -text
+*.psb                   filter=lfs diff=lfs merge=lfs -text
+*.ai                    filter=lfs diff=lfs merge=lfs -text
+*.clip                  filter=lfs diff=lfs merge=lfs -text
+*.kra                   filter=lfs diff=lfs merge=lfs -text
+*.png                   filter=lfs diff=lfs merge=lfs -text
+*.jpg                   filter=lfs diff=lfs merge=lfs -text
+*.jpeg                  filter=lfs diff=lfs merge=lfs -text
+*.tga                   filter=lfs diff=lfs merge=lfs -text
+*.bmp                   filter=lfs diff=lfs merge=lfs -text
+*.exr                   filter=lfs diff=lfs merge=lfs -text
+*.hdr                   filter=lfs diff=lfs merge=lfs -text
+*.tif                   filter=lfs diff=lfs merge=lfs -text
+*.tiff                  filter=lfs diff=lfs merge=lfs -text
+*.webp                  filter=lfs diff=lfs merge=lfs -text
+# 3D models
+*.fbx                   filter=lfs diff=lfs merge=lfs -text
+*.obj                   filter=lfs diff=lfs merge=lfs -text
+*.blend                 filter=lfs diff=lfs merge=lfs -text
+*.dae                   filter=lfs diff=lfs merge=lfs -text
+*.glb                   filter=lfs diff=lfs merge=lfs -text
+*.gltf                  filter=lfs diff=lfs merge=lfs -text
+# Audio and video
+*.wav                   filter=lfs diff=lfs merge=lfs -text
+*.mp3                   filter=lfs diff=lfs merge=lfs -text
+*.ogg                   filter=lfs diff=lfs merge=lfs -text
+*.flac                  filter=lfs diff=lfs merge=lfs -text
+*.aiff                  filter=lfs diff=lfs merge=lfs -text
+*.mp4                   filter=lfs diff=lfs merge=lfs -text
+*.mov                   filter=lfs diff=lfs merge=lfs -text
+*.webm                  filter=lfs diff=lfs merge=lfs -text
+# Fonts
+*.ttf                   filter=lfs diff=lfs merge=lfs -text
+*.otf                   filter=lfs diff=lfs merge=lfs -text
+# Native binaries and plugins
+*.dll                   filter=lfs diff=lfs merge=lfs -text
+*.so                    filter=lfs diff=lfs merge=lfs -text
+*.dylib                 filter=lfs diff=lfs merge=lfs -text
+*.bundle                filter=lfs diff=lfs merge=lfs -text
+*.a                     filter=lfs diff=lfs merge=lfs -text
+*.lib                   filter=lfs diff=lfs merge=lfs -text
+*.exe                   filter=lfs diff=lfs merge=lfs -text
+# Archives
+*.zip                   filter=lfs diff=lfs merge=lfs -text
+*.rar                   filter=lfs diff=lfs merge=lfs -text
+*.7z                    filter=lfs diff=lfs merge=lfs -text
+*.scenetemplate filter=lfs diff=lfs merge=lfs -text
