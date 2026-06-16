@@ -45,7 +45,7 @@ namespace TurnBasedBattle.Application
             // and it can be the actor itself.
             // It does not explicitly require HP > 0 for ally target selection,
             // so defeated allies are also eligible to be healed if the team has not fully lost yet.
-            return allyTeam.GetLowestHpAlly();
+            return allyTeam.GetLowestHpAliveAlly();
         }
     }
 }

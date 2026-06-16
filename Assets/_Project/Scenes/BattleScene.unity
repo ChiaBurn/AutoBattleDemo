@@ -3111,6 +3111,7 @@ GameObject:
   serializedVersion: 6
   m_Component:
   - component: {fileID: 576353274}
+  - component: {fileID: 576353275}
   m_Layer: 0
   m_Name: ApplicationRoot
   m_TagString: Untagged
@@ -3133,6 +3134,32 @@ Transform:
   m_Children: []
   m_Father: {fileID: 1289357253}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &576353275
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 576353273}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: af6e936982bfba84d9b4c0b15ff3b68a, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::TurnBasedBattle.Presentation.BattleSceneController
+  leftCharacterCards:
+  - {fileID: 379133041}
+  - {fileID: 794974274}
+  - {fileID: 1530847231}
+  - {fileID: 1531202554}
+  rightCharacterCards:
+  - {fileID: 1658544960}
+  - {fileID: 814257162}
+  - {fileID: 928441732}
+  - {fileID: 695339655}
+  battleLogView: {fileID: 650118489}
+  battleMetricsView: {fileID: 1486780180}
+  mainButtonPanelView: {fileID: 1520474592}
+  centerControlView: {fileID: 362836243}
 --- !u!1 &616237793
 GameObject:
   m_ObjectHideFlags: 0

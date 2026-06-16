@@ -85,9 +85,10 @@ namespace TurnBasedBattle.Domain
                 .ToList();
         }
 
-        public CharacterRuntime GetLowestHpAlly()
+        public CharacterRuntime GetLowestHpAliveAlly()
         {
             CharacterRuntime? target = _characters
+                .Where(character => character.IsAlive)
                 .OrderBy(character => character.CurrentHp)
                 .ThenBy(character => character.SlotIndex)
                 .FirstOrDefault();
