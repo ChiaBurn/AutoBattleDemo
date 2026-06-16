@@ -22,6 +22,7 @@ namespace TurnBasedBattle.Presentation
     {
         private const string DatabaseFileName = "battle_runs.db";
         private const int AiSimulationCountPerOrder = 1000;
+        private const float ActionAnimationDelaySeconds = 0.5f;
 
         [Header("Team Cards")]
         [SerializeField] private CharacterCardView[] leftCharacterCards;
@@ -52,6 +53,7 @@ namespace TurnBasedBattle.Presentation
         private BattleSession _currentSession;
         private DotNetRandom _battleRandom;
         private ReplayController _replayController;
+        private Coroutine _activeBattleAnimationCoroutine;
 
         private BattlePhase _currentPhase = BattlePhase.NotStarted;
         private BattlePhase _phaseBeforeLoadList = BattlePhase.NotStarted;
@@ -277,6 +279,11 @@ namespace TurnBasedBattle.Presentation
 
         private void ResolveNextRound()
         {
+            if (_activeBattleAnimationCoroutine != null)
+            {
+                return;
+            }
+
             if (_isReplayMode)
             {
                 ReplayNextRound();
@@ -288,13 +295,41 @@ namespace TurnBasedBattle.Presentation
                 return;
             }
 
+            _activeBattleAnimationCoroutine = StartCoroutine(ResolveNextRoundAnimatedCoroutine());
+        }
+
+        private void ResolveUntilFinished()
+        {
+            if (_activeBattleAnimationCoroutine != null)
+            {
+                return;
+            }
+
+            if (_isReplayMode)
+            {
+                ReplayToEnd();
+                return;
+            }
+
+            if (!CanResolveBattle())
+            {
+                return;
+            }
+
+            _activeBattleAnimationCoroutine = StartCoroutine(ResolveUntilFinishedAnimatedCoroutine());
+        }
+
+        private IEnumerator ResolveNextRoundAnimatedCoroutine()
+        {
             ApplyPhase(BattlePhase.BattleResolvingRound);
+
+            BattleSession presentationSession = _currentSession.CloneForBackgroundSimulation();
 
             IReadOnlyList<BattleEvent> events = _battleSimulator.ResolveNextRound(
                 _currentSession,
                 _battleRandom);
 
-            AddEventLogs(events);
+            yield return PlayBattleEventsForPresentation(events, presentationSession);
 
             if (_currentSession.Runtime.IsFinished)
             {
@@ -306,64 +341,268 @@ namespace TurnBasedBattle.Presentation
                 ApplyPhase(BattlePhase.BattleInProgress);
             }
 
+            ClearAllCardHighlights();
             RenderAll();
+
+            _activeBattleAnimationCoroutine = null;
         }
 
-        private void ResolveUntilFinished()
+        private IEnumerator ResolveUntilFinishedAnimatedCoroutine()
         {
-            if (!CanResolveBattle())
-            {
-                return;
-            }
-
             ApplyPhase(BattlePhase.BattleAutoResolving);
+
+            BattleSession presentationSession = _currentSession.CloneForBackgroundSimulation();
 
             IReadOnlyList<BattleEvent> events = _battleSimulator.ResolveUntilFinished(
                 _currentSession,
                 _battleRandom);
 
-            AddEventLogs(events);
+            yield return PlayBattleEventsForPresentation(events, presentationSession);
 
             SaveFinishedBattleWithUiFeedback();
             ApplyPhase(BattlePhase.FinishedSaved);
+
+            ClearAllCardHighlights();
             RenderAll();
+
+            _activeBattleAnimationCoroutine = null;
+        }
+
+        private IEnumerator PlayBattleEventsForPresentation(
+            IReadOnlyList<BattleEvent> events,
+            BattleSession presentationSession)
+        {
+            if (events == null || presentationSession == null)
+            {
+                yield break;
+            }
+
+            RenderTeams(presentationSession.Runtime);
+
+            for (int i = 0; i < events.Count; i++)
+            {
+                BattleEvent battleEvent = events[i];
+
+                EnsurePresentationRound(presentationSession.Runtime, battleEvent.RoundNo);
+
+                // Apply this event's persisted result to the presentation runtime first.
+                // This makes the card state, highlight, and log describe the same event at the same time.
+                ApplyEventToPresentationRuntime(battleEvent, presentationSession.Runtime);
+                presentationSession.Runtime.EvaluateResult();
+
+                RenderTeams(presentationSession.Runtime);
+
+                ClearAllCardHighlights();
+                ApplyEventHighlights(battleEvent);
+
+                if (battleLogView != null)
+                {
+                    battleLogView.AddLine(_logFormatter.FormatEvent(battleEvent));
+                }
+
+                // Keep this event visible long enough before moving to the next actor.
+                yield return new WaitForSeconds(ActionAnimationDelaySeconds);
+            }
+
+            ClearAllCardHighlights();
+        }
+
+        private static void EnsurePresentationRound(BattleRuntime runtime, int targetRound)
+        {
+            if (runtime == null)
+            {
+                return;
+            }
+
+            while (!runtime.IsFinished && runtime.CurrentRound < targetRound)
+            {
+                runtime.BeginNextRound();
+            }
+        }
+
+        private static void ApplyEventToPresentationRuntime(BattleEvent battleEvent, BattleRuntime runtime)
+        {
+            if (battleEvent == null || runtime == null || battleEvent.WasSkipped)
+            {
+                return;
+            }
+
+            if (battleEvent.EnemyTargetTeamSide.HasValue &&
+                battleEvent.EnemyTargetSlotIndex.HasValue &&
+                battleEvent.EnemyHpAfter.HasValue)
+            {
+                CharacterRuntime enemyTarget = runtime
+                    .GetTeam(battleEvent.EnemyTargetTeamSide.Value)
+                    .GetCharacterBySlotIndex(battleEvent.EnemyTargetSlotIndex.Value);
+
+                enemyTarget.SetCurrentHpForReplay(battleEvent.EnemyHpAfter.Value);
+            }
+
+            if (battleEvent.AllyTargetTeamSide.HasValue &&
+                battleEvent.AllyTargetSlotIndex.HasValue &&
+                battleEvent.AllyHpAfter.HasValue)
+            {
+                CharacterRuntime allyTarget = runtime
+                    .GetTeam(battleEvent.AllyTargetTeamSide.Value)
+                    .GetCharacterBySlotIndex(battleEvent.AllyTargetSlotIndex.Value);
+
+                allyTarget.SetCurrentHpForReplay(battleEvent.AllyHpAfter.Value);
+            }
+        }
+
+        private void ApplyEventHighlights(BattleEvent battleEvent)
+        {
+            if (battleEvent == null)
+            {
+                return;
+            }
+
+            SetCardHighlight(
+                battleEvent.ActingTeamSide,
+                battleEvent.ActorSlotIndex,
+                CharacterCardHighlightRole.Actor);
+
+            if (battleEvent.EnemyTargetTeamSide.HasValue &&
+                battleEvent.EnemyTargetSlotIndex.HasValue)
+            {
+                SetCardHighlight(
+                    battleEvent.EnemyTargetTeamSide.Value,
+                    battleEvent.EnemyTargetSlotIndex.Value,
+                    CharacterCardHighlightRole.EnemyTarget);
+            }
+
+            if (battleEvent.AllyTargetTeamSide.HasValue &&
+                battleEvent.AllyTargetSlotIndex.HasValue)
+            {
+                SetCardHighlight(
+                    battleEvent.AllyTargetTeamSide.Value,
+                    battleEvent.AllyTargetSlotIndex.Value,
+                    CharacterCardHighlightRole.AllyTarget);
+            }
+        }
+
+        private void SetCardHighlight(
+            TeamSide teamSide,
+            int slotIndex,
+            CharacterCardHighlightRole role)
+        {
+            CharacterCardView[] cardViews = teamSide == TeamSide.Left
+                ? leftCharacterCards
+                : rightCharacterCards;
+
+            if (cardViews == null ||
+                slotIndex < 0 ||
+                slotIndex >= cardViews.Length ||
+                cardViews[slotIndex] == null)
+            {
+                return;
+            }
+
+            cardViews[slotIndex].SetHighlight(role);
+        }
+
+        private void ClearAllCardHighlights()
+        {
+            ClearCardHighlights(leftCharacterCards);
+            ClearCardHighlights(rightCharacterCards);
+        }
+
+        private static void ClearCardHighlights(CharacterCardView[] cardViews)
+        {
+            if (cardViews == null)
+            {
+                return;
+            }
+
+            for (int i = 0; i < cardViews.Length; i++)
+            {
+                if (cardViews[i] != null)
+                {
+                    cardViews[i].SetHighlight(CharacterCardHighlightRole.None);
+                }
+            }
         }
 
         private void ReplayNextRound()
         {
-            if (_replayController == null || _replayController.IsFinished)
+            if (_activeBattleAnimationCoroutine != null)
+            {
+                return;
+            }
+
+            if (!_isReplayMode || _replayController == null)
+            {
+                return;
+            }
+
+            if (_replayController.IsFinished)
             {
                 ApplyPhase(BattlePhase.ReplayFinished);
                 RenderAll();
                 return;
             }
 
-            ApplyPhase(BattlePhase.ReplayPlaying);
-
-            IReadOnlyList<BattleEvent> events = _replayController.PlayNextRound();
-            AddEventLogs(events);
-
-            ApplyPhase(_replayController.IsFinished
-                ? BattlePhase.ReplayFinished
-                : BattlePhase.ReplayReady);
-
-            RenderAll();
+            _activeBattleAnimationCoroutine = StartCoroutine(ReplayNextRoundAnimatedCoroutine());
         }
 
         private void ReplayToEnd()
         {
+            if (_activeBattleAnimationCoroutine != null)
+            {
+                return;
+            }
+
             if (!_isReplayMode || _replayController == null)
             {
                 return;
             }
 
+            if (_replayController.IsFinished)
+            {
+                ApplyPhase(BattlePhase.ReplayFinished);
+                RenderAll();
+                return;
+            }
+
+            _activeBattleAnimationCoroutine = StartCoroutine(ReplayToEndAnimatedCoroutine());
+        }
+
+        private IEnumerator ReplayNextRoundAnimatedCoroutine()
+        {
             ApplyPhase(BattlePhase.ReplayPlaying);
 
+            BattleSession presentationSession = _currentSession.CloneForBackgroundSimulation();
+
+            IReadOnlyList<BattleEvent> events = _replayController.PlayNextRound();
+
+            yield return PlayBattleEventsForPresentation(events, presentationSession);
+
+            ApplyPhase(_replayController.IsFinished
+                ? BattlePhase.ReplayFinished
+                : BattlePhase.ReplayReady);
+
+            ClearAllCardHighlights();
+            RenderAll();
+
+            _activeBattleAnimationCoroutine = null;
+        }
+
+        private IEnumerator ReplayToEndAnimatedCoroutine()
+        {
+            ApplyPhase(BattlePhase.ReplayPlaying);
+
+            BattleSession presentationSession = _currentSession.CloneForBackgroundSimulation();
+
             IReadOnlyList<BattleEvent> events = _replayController.PlayToEnd();
-            AddEventLogs(events);
+
+            yield return PlayBattleEventsForPresentation(events, presentationSession);
 
             ApplyPhase(BattlePhase.ReplayFinished);
+
+            ClearAllCardHighlights();
             RenderAll();
+
+            _activeBattleAnimationCoroutine = null;
         }
 
         private void ReplayCurrentBattle()
@@ -768,8 +1007,20 @@ namespace TurnBasedBattle.Presentation
                 return;
             }
 
-            RenderTeamCards(leftCharacterCards, _currentSession.Runtime.LeftTeam);
-            RenderTeamCards(rightCharacterCards, _currentSession.Runtime.RightTeam);
+            RenderTeams(_currentSession.Runtime);
+        }
+
+        private void RenderTeams(BattleRuntime runtime)
+        {
+            if (runtime == null)
+            {
+                ClearCharacterCards(leftCharacterCards);
+                ClearCharacterCards(rightCharacterCards);
+                return;
+            }
+
+            RenderTeamCards(leftCharacterCards, runtime.LeftTeam);
+            RenderTeamCards(rightCharacterCards, runtime.RightTeam);
         }
 
         private static void RenderTeamCards(CharacterCardView[] cardViews, TeamRuntime team)

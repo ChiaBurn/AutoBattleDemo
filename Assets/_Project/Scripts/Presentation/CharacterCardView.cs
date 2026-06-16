@@ -6,23 +6,54 @@ using UnityEngine.UI;
 
 namespace TurnBasedBattle.Presentation
 {
+    public enum CharacterCardHighlightRole
+    {
+        None = 0,
+        Actor = 1,
+        EnemyTarget = 2,
+        AllyTarget = 3
+    }
+
     /// <summary>
     /// View component for one character card.
     ///
-    /// It only renders runtime data into UI.
-    /// It should not decide battle rules.
+    /// Visual rule:
+    /// - Actor is represented by yellow outline.
+    /// - Enemy target is represented by red background.
+    /// - Ally target is represented by green background.
+    ///
+    /// This allows Actor + AllyTarget to be displayed at the same time.
     /// </summary>
     public sealed class CharacterCardView : MonoBehaviour
     {
         [SerializeField] private TMP_Text cardInfoText;
         [SerializeField] private Image backgroundImage;
 
-        [Header("Colors")]
+        [Header("Base Colors")]
         [SerializeField] private Color aliveColor = new Color(0.85f, 0.92f, 1f, 0.65f);
         [SerializeField] private Color defeatedColor = new Color(0.35f, 0.35f, 0.35f, 0.65f);
 
+        [Header("Target Highlight Colors")]
+        [SerializeField] private Color enemyTargetColor = new Color(1f, 0.30f, 0.30f, 0.90f);
+        [SerializeField] private Color allyTargetColor = new Color(0.30f, 1f, 0.45f, 0.90f);
+
+        [Header("Actor Outline")]
+        [SerializeField] private Color actorOutlineColor = new Color(1f, 0.85f, 0.10f, 1f);
+        [SerializeField] private Vector2 actorOutlineDistance = new Vector2(5f, -5f);
+
+        private CharacterRuntime _lastRenderedCharacter;
+        private Outline _actorOutline;
+
+        private void Awake()
+        {
+            EnsureActorOutline();
+            SetActorOutlineVisible(false);
+        }
+
         public void Render(CharacterRuntime character)
         {
+            _lastRenderedCharacter = character;
+
             if (character == null)
             {
                 Clear();
@@ -42,14 +73,13 @@ namespace TurnBasedBattle.Presentation
                     $"ª¬ºA¡G{statusText}";
             }
 
-            if (backgroundImage != null)
-            {
-                backgroundImage.color = character.IsAlive ? aliveColor : defeatedColor;
-            }
+            SetHighlight(CharacterCardHighlightRole.None);
         }
 
         public void Clear()
         {
+            _lastRenderedCharacter = null;
+
             if (cardInfoText != null)
             {
                 cardInfoText.text =
@@ -64,6 +94,85 @@ namespace TurnBasedBattle.Presentation
             {
                 backgroundImage.color = defeatedColor;
             }
+
+            SetActorOutlineVisible(false);
+        }
+
+        public void SetHighlight(CharacterCardHighlightRole role)
+        {
+            switch (role)
+            {
+                case CharacterCardHighlightRole.Actor:
+                    SetActorOutlineVisible(true);
+                    break;
+
+                case CharacterCardHighlightRole.EnemyTarget:
+                    SetBackgroundColor(enemyTargetColor);
+                    break;
+
+                case CharacterCardHighlightRole.AllyTarget:
+                    SetBackgroundColor(allyTargetColor);
+                    break;
+
+                case CharacterCardHighlightRole.None:
+                default:
+                    SetActorOutlineVisible(false);
+                    SetBackgroundColor(GetBaseColor());
+                    break;
+            }
+        }
+
+        private void EnsureActorOutline()
+        {
+            if (backgroundImage == null)
+            {
+                return;
+            }
+
+            _actorOutline = backgroundImage.GetComponent<Outline>();
+
+            if (_actorOutline == null)
+            {
+                _actorOutline = backgroundImage.gameObject.AddComponent<Outline>();
+            }
+
+            _actorOutline.effectColor = actorOutlineColor;
+            _actorOutline.effectDistance = actorOutlineDistance;
+            _actorOutline.useGraphicAlpha = false;
+        }
+
+        private void SetActorOutlineVisible(bool isVisible)
+        {
+            if (_actorOutline == null)
+            {
+                EnsureActorOutline();
+            }
+
+            if (_actorOutline != null)
+            {
+                _actorOutline.effectColor = actorOutlineColor;
+                _actorOutline.effectDistance = actorOutlineDistance;
+                _actorOutline.useGraphicAlpha = false;
+                _actorOutline.enabled = isVisible;
+            }
+        }
+
+        private void SetBackgroundColor(Color color)
+        {
+            if (backgroundImage != null)
+            {
+                backgroundImage.color = color;
+            }
+        }
+
+        private Color GetBaseColor()
+        {
+            if (_lastRenderedCharacter == null)
+            {
+                return defeatedColor;
+            }
+
+            return _lastRenderedCharacter.IsAlive ? aliveColor : defeatedColor;
         }
     }
 }
