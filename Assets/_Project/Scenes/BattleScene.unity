@@ -3077,6 +3077,7 @@ GameObject:
   serializedVersion: 6
   m_Component:
   - component: {fileID: 576353274}
+  - component: {fileID: 576353275}
   m_Layer: 0
   m_Name: ApplicationRoot
   m_TagString: Untagged
@@ -3099,6 +3100,18 @@ Transform:
   m_Children: []
   m_Father: {fileID: 1289357253}
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &576353275
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 576353273}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 6a604453d3dc66b4c808dfe1794e8ea1, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::TurnBasedBattle.Utilities.BattleSimulationSmokeTest
 --- !u!1 &616237793
 GameObject:
   m_ObjectHideFlags: 0
