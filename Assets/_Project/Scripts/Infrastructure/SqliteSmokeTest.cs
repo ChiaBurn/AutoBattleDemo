@@ -31,7 +31,7 @@ public sealed class SqliteSmokeTest : MonoBehaviour
             // In Unity, explicitly initializing the provider is safer than assuming auto-initialization.
             SQLitePCL.Batteries_V2.Init();
 
-            string databasePath = Path.Combine(Application.persistentDataPath, DatabaseFileName);
+            string databasePath = Path.Combine(UnityEngine.Application.persistentDataPath, DatabaseFileName);
             string connectionString = $"Data Source={databasePath}";
 
             using SqliteConnection connection = new SqliteConnection(connectionString);

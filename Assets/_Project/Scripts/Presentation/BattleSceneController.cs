@@ -1,9 +1,15 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 using DotNetRandom = System.Random;
-using TurnBasedBattle.Application;
+
 using TurnBasedBattle.Domain;
+using TurnBasedBattle.Infrastructure;
 using UnityEngine;
+using TurnBasedBattle.ApplicationServices.Factories;
+using TurnBasedBattle.ApplicationServices.Simulation;
+using TurnBasedBattle.ApplicationServices.Formatters;
+using TurnBasedBattle.ApplicationServices.Calculators;
 
 namespace TurnBasedBattle.Presentation
 {
@@ -14,15 +20,17 @@ namespace TurnBasedBattle.Presentation
     /// 1. Start a new battle.
     /// 2. Resolve next round.
     /// 3. Resolve until finished.
-    /// 4. Render character cards, log, metrics, and button visibility.
+    /// 4. Persist completed battles into SQLite.
+    /// 5. Render character cards, log, metrics, and button visibility.
     ///
     /// Not implemented yet:
     /// 1. AI suggestion.
-    /// 2. SQLite persistence.
-    /// 3. Replay / history playback.
+    /// 2. Replay / history playback.
     /// </summary>
     public sealed class BattleSceneController : MonoBehaviour
     {
+        private const string DatabaseFileName = "battle_runs.db";
+
         [Header("Team Cards")]
         [SerializeField] private CharacterCardView[] leftCharacterCards;
         [SerializeField] private CharacterCardView[] rightCharacterCards;
@@ -40,12 +48,17 @@ namespace TurnBasedBattle.Presentation
         private readonly BattleLogFormatter _logFormatter = new BattleLogFormatter();
         private readonly BattleMetricsCalculator _metricsCalculator = new BattleMetricsCalculator();
 
+        private BattlePersistenceService _persistenceService;
+
         private BattleSession _currentSession;
         private DotNetRandom _battleRandom;
         private BattlePhase _currentPhase = BattlePhase.NotStarted;
 
         private void Awake()
         {
+            string databasePath = Path.Combine(UnityEngine.Application.persistentDataPath, DatabaseFileName);
+            _persistenceService = new BattlePersistenceService(databasePath);
+
             BindButtonEvents();
             ApplyPhase(BattlePhase.NotStarted);
             ClearBattleViews();
@@ -183,18 +196,38 @@ namespace TurnBasedBattle.Presentation
 
         private void StartNewBattleFromNewBattleButton()
         {
+            BattleSaveResult backgroundSaveResult = null;
+            Exception backgroundSaveException = null;
+
             if (_currentSession != null && !_currentSession.Runtime.IsFinished)
             {
-                // Temporary behavior until official background persistence is implemented.
-                // This prevents the button from doing nothing during development,
-                // but the final implementation will finish and save the old battle via SQLite.
-                if (battleLogView != null)
+                try
                 {
-                    battleLogView.AddLine("目前版本尚未接上背景完成與存檔流程；先建立新戰鬥。");
+                    EnsureCurrentBattleFinishedWithoutPresentation();
+                    backgroundSaveResult = SaveCompletedCurrentBattleWithoutUiLog();
+                }
+                catch (Exception exception)
+                {
+                    backgroundSaveException = exception;
+                    Debug.LogError($"[BattleSceneController] Failed to finish and save previous battle.\n{exception}");
                 }
             }
 
             StartNewBattle();
+
+            if (battleLogView == null)
+            {
+                return;
+            }
+
+            if (backgroundSaveResult != null)
+            {
+                battleLogView.AddLine(_logFormatter.FormatBackgroundBattleSaved(backgroundSaveResult.SavedAt));
+            }
+            else if (backgroundSaveException != null)
+            {
+                battleLogView.AddLine("上一場未完成戰鬥背景儲存失敗；詳細錯誤請查看 Console。");
+            }
         }
 
         private void ResolveNextRound()
@@ -212,11 +245,16 @@ namespace TurnBasedBattle.Presentation
 
             AddEventLogs(events);
 
-            BattlePhase nextPhase = _currentSession.Runtime.IsFinished
-                ? BattlePhase.FinishedSaved
-                : BattlePhase.BattleInProgress;
+            if (_currentSession.Runtime.IsFinished)
+            {
+                SaveFinishedBattleWithUiFeedback();
+                ApplyPhase(BattlePhase.FinishedSaved);
+            }
+            else
+            {
+                ApplyPhase(BattlePhase.BattleInProgress);
+            }
 
-            ApplyPhase(nextPhase);
             RenderAll();
         }
 
@@ -235,8 +273,89 @@ namespace TurnBasedBattle.Presentation
 
             AddEventLogs(events);
 
+            SaveFinishedBattleWithUiFeedback();
             ApplyPhase(BattlePhase.FinishedSaved);
             RenderAll();
+        }
+
+        private void EnsureCurrentBattleFinishedWithoutPresentation()
+        {
+            if (_currentSession == null || _currentSession.Runtime.IsFinished)
+            {
+                return;
+            }
+
+            if (_battleRandom == null)
+            {
+                _battleRandom = new DotNetRandom(_currentSession.InitialRandomSeed);
+            }
+
+            _battleSimulator.ResolveUntilFinished(_currentSession, _battleRandom);
+        }
+
+        private BattleSaveResult SaveCompletedCurrentBattleWithoutUiLog()
+        {
+            if (_currentSession == null)
+            {
+                throw new InvalidOperationException("Cannot save because current session is null.");
+            }
+
+            if (_currentSession.IsSaved && _currentSession.SavedBattleRunId.HasValue)
+            {
+                return new BattleSaveResult(
+                    _currentSession.SavedBattleRunId.Value,
+                    DateTime.Now,
+                    Path.Combine(UnityEngine.Application.persistentDataPath, DatabaseFileName));
+            }
+
+            BattleSaveResult result = _persistenceService.SaveCompletedBattle(_currentSession);
+            _currentSession.MarkSaved(result.BattleRunId);
+
+            Debug.Log(
+                $"[BattleSceneController] Battle saved. " +
+                $"BattleRunId={result.BattleRunId}, DatabasePath={result.DatabasePath}"
+            );
+
+            return result;
+        }
+
+        private void SaveFinishedBattleWithUiFeedback()
+        {
+            if (_currentSession == null)
+            {
+                return;
+            }
+
+            if (_currentSession.IsSaved)
+            {
+                return;
+            }
+
+            ApplyPhase(BattlePhase.Saving);
+
+            if (battleLogView != null)
+            {
+                battleLogView.AddLine(_logFormatter.FormatSaving());
+            }
+
+            try
+            {
+                BattleSaveResult result = SaveCompletedCurrentBattleWithoutUiLog();
+
+                if (battleLogView != null)
+                {
+                    battleLogView.AddLine(_logFormatter.FormatSaved(result.SavedAt));
+                }
+            }
+            catch (Exception exception)
+            {
+                Debug.LogError($"[BattleSceneController] Failed to save completed battle.\n{exception}");
+
+                if (battleLogView != null)
+                {
+                    battleLogView.AddLine(_logFormatter.FormatSaveFailed());
+                }
+            }
         }
 
         private bool CanResolveBattle()

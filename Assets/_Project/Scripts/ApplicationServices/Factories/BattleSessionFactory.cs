@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using DotNetRandom = System.Random;
 using TurnBasedBattle.Domain;
 
-namespace TurnBasedBattle.Application
+namespace TurnBasedBattle.ApplicationServices.Factories
 {
     /// <summary>
     /// Creates BattleSession instances.

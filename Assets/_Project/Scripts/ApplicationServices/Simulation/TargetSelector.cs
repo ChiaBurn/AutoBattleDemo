@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using TurnBasedBattle.Domain;
 using DotNetRandom = System.Random;
 
-namespace TurnBasedBattle.Application
+namespace TurnBasedBattle.ApplicationServices.Simulation
 {
     /// <summary>
     /// Selects enemy and ally targets according to the exercise rules.

@@ -1,5 +1,5 @@
 using TMPro;
-using TurnBasedBattle.Application;
+using TurnBasedBattle.ApplicationServices.Formatters;
 using TurnBasedBattle.Domain;
 using UnityEngine;
 using UnityEngine.UI;

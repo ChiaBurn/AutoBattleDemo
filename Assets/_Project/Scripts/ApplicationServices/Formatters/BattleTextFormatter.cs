@@ -3,7 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using TurnBasedBattle.Domain;
 
-namespace TurnBasedBattle.Application
+namespace TurnBasedBattle.ApplicationServices.Formatters
 {
     /// <summary>
     /// Converts domain enum / runtime values into Traditional Chinese display text.

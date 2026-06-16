@@ -1,7 +1,8 @@
 using System;
+using TurnBasedBattle.ApplicationServices.Formatters;
 using TurnBasedBattle.Domain;
 
-namespace TurnBasedBattle.Application
+namespace TurnBasedBattle.ApplicationServices.Calculators
 {
     /// <summary>
     /// Calculates aggregated values for the Metrics UI panel.

@@ -2,9 +2,11 @@ using System;
 using System.Collections.Generic;
 using System.Text;
 using DotNetRandom = System.Random;
-using TurnBasedBattle.Application;
 using TurnBasedBattle.Domain;
 using UnityEngine;
+using TurnBasedBattle.ApplicationServices.Simulation;
+using TurnBasedBattle.ApplicationServices.Formatters;
+using TurnBasedBattle.ApplicationServices.Calculators;
 
 namespace TurnBasedBattle.Utilities
 {

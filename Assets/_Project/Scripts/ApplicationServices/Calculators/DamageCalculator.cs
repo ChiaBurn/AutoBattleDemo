@@ -1,7 +1,7 @@
 using System;
 using TurnBasedBattle.Domain;
 
-namespace TurnBasedBattle.Application
+namespace TurnBasedBattle.ApplicationServices.Calculators
 {
     /// <summary>
     /// Pure damage / healing formula calculator.

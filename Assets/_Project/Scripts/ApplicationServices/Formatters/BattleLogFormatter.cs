@@ -1,7 +1,7 @@
 using System;
 using TurnBasedBattle.Domain;
 
-namespace TurnBasedBattle.Application
+namespace TurnBasedBattle.ApplicationServices.Formatters
 {
     /// <summary>
     /// Formats BattleEvent and battle lifecycle messages into Traditional Chinese log text.

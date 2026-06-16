@@ -1,9 +1,10 @@
 using System;
 using System.Collections.Generic;
+using TurnBasedBattle.ApplicationServices.Calculators;
 using TurnBasedBattle.Domain;
 using DotNetRandom = System.Random;
 
-namespace TurnBasedBattle.Application
+namespace TurnBasedBattle.ApplicationServices.Simulation
 {
     /// <summary>
     /// Pure C# battle simulator.
