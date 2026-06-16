@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using TurnBasedBattle.Domain;
+using DotNetRandom = System.Random;
 
 namespace TurnBasedBattle.Application
 {
@@ -10,7 +11,7 @@ namespace TurnBasedBattle.Application
     /// </summary>
     public sealed class TargetSelector
     {
-        public CharacterRuntime SelectEnemyTarget(TeamRuntime enemyTeam, Random random)
+        public CharacterRuntime SelectEnemyTarget(TeamRuntime enemyTeam, DotNetRandom random)
         {
             if (enemyTeam == null)
             {
