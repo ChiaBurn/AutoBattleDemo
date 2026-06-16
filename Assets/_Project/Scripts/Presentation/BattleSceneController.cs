@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.Collections;
+using System.Linq;
 using System.IO;
 using DotNetRandom = System.Random;
 using TurnBasedBattle.ApplicationServices.Calculators;
@@ -11,6 +13,7 @@ using TurnBasedBattle.Domain;
 using TurnBasedBattle.Infrastructure;
 using TurnBasedBattle.Infrastructure.Queries;
 using TurnBasedBattle.Infrastructure.Records;
+using TurnBasedBattle.ApplicationServices.AI;
 using UnityEngine;
 
 namespace TurnBasedBattle.Presentation
@@ -18,6 +21,7 @@ namespace TurnBasedBattle.Presentation
     public sealed class BattleSceneController : MonoBehaviour
     {
         private const string DatabaseFileName = "battle_runs.db";
+        private const int AiSimulationCountPerOrder = 1000;
 
         [Header("Team Cards")]
         [SerializeField] private CharacterCardView[] leftCharacterCards;
@@ -33,6 +37,7 @@ namespace TurnBasedBattle.Presentation
 
         [Header("Modal Views")]
         [SerializeField] private LoadListModalView loadListModalView;
+        [SerializeField] private AiSuggestionModalView aiSuggestionModalView;
 
         private readonly BattleSessionFactory _sessionFactory = new BattleSessionFactory();
         private readonly BattleSimulator _battleSimulator = new BattleSimulator();
@@ -42,6 +47,7 @@ namespace TurnBasedBattle.Presentation
         private BattlePersistenceService _persistenceService;
         private BattleHistoryQueryService _historyQueryService;
         private BattleReplayQueryService _replayQueryService;
+        private readonly AiTeamOrderEvaluator _aiTeamOrderEvaluator = new AiTeamOrderEvaluator();
 
         private BattleSession _currentSession;
         private DotNetRandom _battleRandom;
@@ -49,6 +55,7 @@ namespace TurnBasedBattle.Presentation
 
         private BattlePhase _currentPhase = BattlePhase.NotStarted;
         private BattlePhase _phaseBeforeLoadList = BattlePhase.NotStarted;
+        private AiEvaluationResult _latestAiEvaluationResult;
 
         private bool _isReplayMode;
         private long? _activeReplayBattleRunId;
@@ -115,7 +122,7 @@ namespace TurnBasedBattle.Presentation
 
                 if (centerControlView.AiSuggestButton != null)
                 {
-                    centerControlView.AiSuggestButton.onClick.AddListener(ShowAiNotImplementedLog);
+                    centerControlView.AiSuggestButton.onClick.AddListener(StartAiSuggestion);
                 }
 
                 if (centerControlView.ReplayCurrentButton != null)
@@ -129,6 +136,13 @@ namespace TurnBasedBattle.Presentation
                 loadListModalView.ConfirmSelected += HandleReplayHistoryConfirmed;
                 loadListModalView.CancelClicked += HandleReplayHistoryCancelled;
                 loadListModalView.Hide();
+            }
+
+            if (aiSuggestionModalView != null)
+            {
+                aiSuggestionModalView.ApplyClicked += ApplyLatestAiSuggestion;
+                aiSuggestionModalView.CancelClicked += CancelAiSuggestion;
+                aiSuggestionModalView.Hide();
             }
         }
 
@@ -176,7 +190,7 @@ namespace TurnBasedBattle.Presentation
 
                 if (centerControlView.AiSuggestButton != null)
                 {
-                    centerControlView.AiSuggestButton.onClick.RemoveListener(ShowAiNotImplementedLog);
+                    centerControlView.AiSuggestButton.onClick.RemoveListener(StartAiSuggestion);
                 }
 
                 if (centerControlView.ReplayCurrentButton != null)
@@ -189,6 +203,12 @@ namespace TurnBasedBattle.Presentation
             {
                 loadListModalView.ConfirmSelected -= HandleReplayHistoryConfirmed;
                 loadListModalView.CancelClicked -= HandleReplayHistoryCancelled;
+            }
+
+            if (aiSuggestionModalView != null)
+            {
+                aiSuggestionModalView.ApplyClicked -= ApplyLatestAiSuggestion;
+                aiSuggestionModalView.CancelClicked -= CancelAiSuggestion;
             }
         }
 
@@ -584,6 +604,132 @@ namespace TurnBasedBattle.Presentation
             {
                 battleLogView.AddLine("AI 建議左隊配置功能尚未實作。");
             }
+        }
+
+        private void StartAiSuggestion()
+        {
+            if (_currentSession == null)
+            {
+                return;
+            }
+
+            if (_currentPhase != BattlePhase.BattleReady)
+            {
+                if (battleLogView != null)
+                {
+                    battleLogView.AddLine("AI 建議只能在戰鬥尚未開始時使用。");
+                }
+
+                return;
+            }
+
+            if (aiSuggestionModalView == null)
+            {
+                if (battleLogView != null)
+                {
+                    battleLogView.AddLine("AI 結果視窗尚未綁定 UI。");
+                }
+
+                return;
+            }
+
+            StartCoroutine(RunAiSuggestionCoroutine());
+        }
+
+        private IEnumerator RunAiSuggestionCoroutine()
+        {
+            ApplyPhase(BattlePhase.AiRunning);
+            aiSuggestionModalView.ShowRunning();
+
+            // Let Unity render the running modal before the synchronous AI evaluation starts.
+            yield return null;
+
+            try
+            {
+                IReadOnlyList<CharacterClass> rightOrder = _currentSession.Runtime.RightTeam.Characters
+                    .Select(character => character.Class)
+                    .ToList();
+
+                int baseSeed = unchecked(_currentSession.InitialRandomSeed ^ Environment.TickCount);
+
+                _latestAiEvaluationResult = _aiTeamOrderEvaluator.EvaluateBestLeftOrder(
+                    rightOrder,
+                    AiSimulationCountPerOrder,
+                    baseSeed);
+
+                aiSuggestionModalView.ShowResult(_latestAiEvaluationResult);
+                ApplyPhase(BattlePhase.AiResult);
+            }
+            catch (Exception exception)
+            {
+                Debug.LogError($"[BattleSceneController] AI evaluation failed.\n{exception}");
+
+                _latestAiEvaluationResult = null;
+                aiSuggestionModalView.Hide();
+
+                if (battleLogView != null)
+                {
+                    battleLogView.AddLine("AI 計算失敗；詳細錯誤請查看 Console。");
+                }
+
+                ApplyPhase(BattlePhase.BattleReady);
+                RenderAll();
+            }
+        }
+
+        private void ApplyLatestAiSuggestion()
+        {
+            if (_latestAiEvaluationResult == null || _currentSession == null)
+            {
+                return;
+            }
+
+            if (_currentPhase != BattlePhase.AiResult)
+            {
+                return;
+            }
+
+            int seed = _currentSession.InitialRandomSeed;
+
+            _currentSession = _sessionFactory.CreateBattleFromOrders(
+                _latestAiEvaluationResult.SuggestedLeftOrder,
+                _latestAiEvaluationResult.FixedRightOrder,
+                seed);
+
+            _currentSession.MarkAiApplied(
+                _latestAiEvaluationResult.WinRate,
+                _latestAiEvaluationResult.TotalSimulationCount);
+
+            _battleRandom = new DotNetRandom(seed);
+            _isReplayMode = false;
+            _replayController = null;
+            _activeReplayBattleRunId = null;
+
+            aiSuggestionModalView.Hide();
+
+            if (battleLogView != null)
+            {
+                string leftOrder = BattleTextFormatter.FormatClassOrder(_currentSession.Runtime.LeftTeam.Characters);
+                battleLogView.AddLine($"已套用 AI 建議左隊配置：{leftOrder}。");
+            }
+
+            _latestAiEvaluationResult = null;
+
+            ApplyPhase(BattlePhase.BattleReady);
+            RenderAll();
+        }
+
+        private void CancelAiSuggestion()
+        {
+            _latestAiEvaluationResult = null;
+
+            if (aiSuggestionModalView != null)
+            {
+                aiSuggestionModalView.Hide();
+            }
+
+            ApplyPhase(BattlePhase.BattleReady);
+            RenderAll();
         }
 
         private void ApplyPhase(BattlePhase phase)
