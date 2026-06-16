@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using DotNetRandom = System.Random;
-
 using TurnBasedBattle.Domain;
 using TurnBasedBattle.Infrastructure;
 using UnityEngine;
@@ -10,6 +9,8 @@ using TurnBasedBattle.ApplicationServices.Factories;
 using TurnBasedBattle.ApplicationServices.Simulation;
 using TurnBasedBattle.ApplicationServices.Formatters;
 using TurnBasedBattle.ApplicationServices.Calculators;
+using TurnBasedBattle.Infrastructure.Queries;
+using TurnBasedBattle.Infrastructure.Records;
 
 namespace TurnBasedBattle.Presentation
 {
@@ -43,21 +44,27 @@ namespace TurnBasedBattle.Presentation
         [Header("Center View")]
         [SerializeField] private CenterControlView centerControlView;
 
+        [Header("Modal Views")]
+        [SerializeField] private LoadListModalView loadListModalView;
+
         private readonly BattleSessionFactory _sessionFactory = new BattleSessionFactory();
         private readonly BattleSimulator _battleSimulator = new BattleSimulator();
         private readonly BattleLogFormatter _logFormatter = new BattleLogFormatter();
         private readonly BattleMetricsCalculator _metricsCalculator = new BattleMetricsCalculator();
 
         private BattlePersistenceService _persistenceService;
+        private BattleHistoryQueryService _historyQueryService;
 
         private BattleSession _currentSession;
         private DotNetRandom _battleRandom;
         private BattlePhase _currentPhase = BattlePhase.NotStarted;
+        private BattlePhase _phaseBeforeLoadList = BattlePhase.NotStarted;
 
         private void Awake()
         {
             string databasePath = Path.Combine(UnityEngine.Application.persistentDataPath, DatabaseFileName);
             _persistenceService = new BattlePersistenceService(databasePath);
+            _historyQueryService = new BattleHistoryQueryService(databasePath);
 
             BindButtonEvents();
             ApplyPhase(BattlePhase.NotStarted);
@@ -95,7 +102,7 @@ namespace TurnBasedBattle.Presentation
 
                 if (mainButtonPanelView.ReplayHistoryButton != null)
                 {
-                    mainButtonPanelView.ReplayHistoryButton.onClick.AddListener(ShowReplayNotImplementedLog);
+                    mainButtonPanelView.ReplayHistoryButton.onClick.AddListener(OpenReplayHistoryList);
                 }
 
                 if (mainButtonPanelView.ReplayToEndButton != null)
@@ -120,6 +127,13 @@ namespace TurnBasedBattle.Presentation
                 {
                     centerControlView.ReplayCurrentButton.onClick.AddListener(ShowReplayNotImplementedLog);
                 }
+            }
+
+            if (loadListModalView != null)
+            {
+                loadListModalView.ConfirmSelected += HandleReplayHistoryConfirmed;
+                loadListModalView.CancelClicked += HandleReplayHistoryCancelled;
+                loadListModalView.Hide();
             }
         }
 
@@ -149,7 +163,7 @@ namespace TurnBasedBattle.Presentation
 
                 if (mainButtonPanelView.ReplayHistoryButton != null)
                 {
-                    mainButtonPanelView.ReplayHistoryButton.onClick.RemoveListener(ShowReplayNotImplementedLog);
+                    mainButtonPanelView.ReplayHistoryButton.onClick.RemoveListener(OpenReplayHistoryList);
                 }
 
                 if (mainButtonPanelView.ReplayToEndButton != null)
@@ -174,6 +188,12 @@ namespace TurnBasedBattle.Presentation
                 {
                     centerControlView.ReplayCurrentButton.onClick.RemoveListener(ShowReplayNotImplementedLog);
                 }
+            }
+
+            if (loadListModalView != null)
+            {
+                loadListModalView.ConfirmSelected -= HandleReplayHistoryConfirmed;
+                loadListModalView.CancelClicked -= HandleReplayHistoryCancelled;
             }
         }
 
@@ -407,6 +427,78 @@ namespace TurnBasedBattle.Presentation
             {
                 battleLogView.AddLine("回放功能尚未實作。");
             }
+        }
+
+        private void OpenReplayHistoryList()
+        {
+            if (_historyQueryService == null)
+            {
+                Debug.LogWarning("[BattleSceneController] History query service is not initialized.");
+                return;
+            }
+
+            if (loadListModalView == null)
+            {
+                if (battleLogView != null)
+                {
+                    battleLogView.AddLine("回放紀錄列表尚未綁定 UI。");
+                }
+
+                return;
+            }
+
+            try
+            {
+                _phaseBeforeLoadList = _currentPhase;
+
+                IReadOnlyList<BattleRunSummaryRecord> records =
+                    _historyQueryService.GetLatestBattleRuns(limit: 50);
+
+                loadListModalView.Show(records);
+                ApplyPhase(BattlePhase.LoadList);
+            }
+            catch (Exception exception)
+            {
+                Debug.LogError($"[BattleSceneController] Failed to open replay history list.\n{exception}");
+
+                if (battleLogView != null)
+                {
+                    battleLogView.AddLine("讀取回放紀錄失敗；詳細錯誤請查看 Console。");
+                }
+            }
+        }
+
+        private void HandleReplayHistoryConfirmed(BattleRunSummaryRecord record)
+        {
+            if (record == null)
+            {
+                return;
+            }
+
+            if (loadListModalView != null)
+            {
+                loadListModalView.Hide();
+            }
+
+            if (battleLogView != null)
+            {
+                battleLogView.Clear();
+                battleLogView.AddLine($"已選擇紀錄 {record.CreatedAtText}；Replay 載入功能尚未實作。");
+            }
+
+            ApplyPhase(_phaseBeforeLoadList);
+            RenderAll();
+        }
+
+        private void HandleReplayHistoryCancelled()
+        {
+            if (loadListModalView != null)
+            {
+                loadListModalView.Hide();
+            }
+
+            ApplyPhase(_phaseBeforeLoadList);
+            RenderAll();
         }
 
         private void ApplyPhase(BattlePhase phase)
