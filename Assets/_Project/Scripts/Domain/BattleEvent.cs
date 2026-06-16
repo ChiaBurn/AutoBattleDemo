@@ -189,5 +189,48 @@ namespace TurnBasedBattle.Domain
                 allyHpAfter: allyHpChange.After,
                 winnerAfterEvent);
         }
+
+        public static BattleEvent CreateLoaded(
+            int sequenceNo,
+            int roundNo,
+            TeamSide actingTeamSide,
+            int actorSlotIndex,
+            CharacterClass actorClass,
+            bool wasSkipped,
+            TeamSide? enemyTargetTeamSide,
+            int? enemyTargetSlotIndex,
+            CharacterClass? enemyTargetClass,
+            int damageAmount,
+            int? enemyHpBefore,
+            int? enemyHpAfter,
+            TeamSide? allyTargetTeamSide,
+            int? allyTargetSlotIndex,
+            CharacterClass? allyTargetClass,
+            int healAmount,
+            int? allyHpBefore,
+            int? allyHpAfter,
+            BattleResult winnerAfterEvent)
+        {
+            return new BattleEvent(
+                sequenceNo,
+                roundNo,
+                actingTeamSide,
+                actorSlotIndex,
+                actorClass,
+                wasSkipped,
+                enemyTargetTeamSide,
+                enemyTargetSlotIndex,
+                enemyTargetClass,
+                damageAmount,
+                enemyHpBefore,
+                enemyHpAfter,
+                allyTargetTeamSide,
+                allyTargetSlotIndex,
+                allyTargetClass,
+                healAmount,
+                allyHpBefore,
+                allyHpAfter,
+                winnerAfterEvent);
+        }
     }
 }

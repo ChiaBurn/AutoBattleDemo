@@ -2,32 +2,19 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using DotNetRandom = System.Random;
+using TurnBasedBattle.ApplicationServices.Calculators;
+using TurnBasedBattle.ApplicationServices.Factories;
+using TurnBasedBattle.ApplicationServices.Formatters;
+using TurnBasedBattle.ApplicationServices.Replay;
+using TurnBasedBattle.ApplicationServices.Simulation;
 using TurnBasedBattle.Domain;
 using TurnBasedBattle.Infrastructure;
-using UnityEngine;
-using TurnBasedBattle.ApplicationServices.Factories;
-using TurnBasedBattle.ApplicationServices.Simulation;
-using TurnBasedBattle.ApplicationServices.Formatters;
-using TurnBasedBattle.ApplicationServices.Calculators;
 using TurnBasedBattle.Infrastructure.Queries;
 using TurnBasedBattle.Infrastructure.Records;
+using UnityEngine;
 
 namespace TurnBasedBattle.Presentation
 {
-    /// <summary>
-    /// Main scene controller for BattleScene.
-    ///
-    /// Current implementation scope:
-    /// 1. Start a new battle.
-    /// 2. Resolve next round.
-    /// 3. Resolve until finished.
-    /// 4. Persist completed battles into SQLite.
-    /// 5. Render character cards, log, metrics, and button visibility.
-    ///
-    /// Not implemented yet:
-    /// 1. AI suggestion.
-    /// 2. Replay / history playback.
-    /// </summary>
     public sealed class BattleSceneController : MonoBehaviour
     {
         private const string DatabaseFileName = "battle_runs.db";
@@ -54,17 +41,25 @@ namespace TurnBasedBattle.Presentation
 
         private BattlePersistenceService _persistenceService;
         private BattleHistoryQueryService _historyQueryService;
+        private BattleReplayQueryService _replayQueryService;
 
         private BattleSession _currentSession;
         private DotNetRandom _battleRandom;
+        private ReplayController _replayController;
+
         private BattlePhase _currentPhase = BattlePhase.NotStarted;
         private BattlePhase _phaseBeforeLoadList = BattlePhase.NotStarted;
+
+        private bool _isReplayMode;
+        private long? _activeReplayBattleRunId;
 
         private void Awake()
         {
             string databasePath = Path.Combine(UnityEngine.Application.persistentDataPath, DatabaseFileName);
+
             _persistenceService = new BattlePersistenceService(databasePath);
             _historyQueryService = new BattleHistoryQueryService(databasePath);
+            _replayQueryService = new BattleReplayQueryService(databasePath);
 
             BindButtonEvents();
             ApplyPhase(BattlePhase.NotStarted);
@@ -107,7 +102,7 @@ namespace TurnBasedBattle.Presentation
 
                 if (mainButtonPanelView.ReplayToEndButton != null)
                 {
-                    mainButtonPanelView.ReplayToEndButton.onClick.AddListener(ShowReplayNotImplementedLog);
+                    mainButtonPanelView.ReplayToEndButton.onClick.AddListener(ReplayToEnd);
                 }
             }
 
@@ -125,7 +120,7 @@ namespace TurnBasedBattle.Presentation
 
                 if (centerControlView.ReplayCurrentButton != null)
                 {
-                    centerControlView.ReplayCurrentButton.onClick.AddListener(ShowReplayNotImplementedLog);
+                    centerControlView.ReplayCurrentButton.onClick.AddListener(ReplayCurrentBattle);
                 }
             }
 
@@ -168,7 +163,7 @@ namespace TurnBasedBattle.Presentation
 
                 if (mainButtonPanelView.ReplayToEndButton != null)
                 {
-                    mainButtonPanelView.ReplayToEndButton.onClick.RemoveListener(ShowReplayNotImplementedLog);
+                    mainButtonPanelView.ReplayToEndButton.onClick.RemoveListener(ReplayToEnd);
                 }
             }
 
@@ -186,7 +181,7 @@ namespace TurnBasedBattle.Presentation
 
                 if (centerControlView.ReplayCurrentButton != null)
                 {
-                    centerControlView.ReplayCurrentButton.onClick.RemoveListener(ShowReplayNotImplementedLog);
+                    centerControlView.ReplayCurrentButton.onClick.RemoveListener(ReplayCurrentBattle);
                 }
             }
 
@@ -199,6 +194,10 @@ namespace TurnBasedBattle.Presentation
 
         private void StartNewBattle()
         {
+            _isReplayMode = false;
+            _replayController = null;
+            _activeReplayBattleRunId = null;
+
             int seed = Environment.TickCount;
 
             _currentSession = _sessionFactory.CreateRandomBattle(seed);
@@ -216,6 +215,12 @@ namespace TurnBasedBattle.Presentation
 
         private void StartNewBattleFromNewBattleButton()
         {
+            if (_isReplayMode)
+            {
+                StartNewBattle();
+                return;
+            }
+
             BattleSaveResult backgroundSaveResult = null;
             Exception backgroundSaveException = null;
 
@@ -252,6 +257,12 @@ namespace TurnBasedBattle.Presentation
 
         private void ResolveNextRound()
         {
+            if (_isReplayMode)
+            {
+                ReplayNextRound();
+                return;
+            }
+
             if (!CanResolveBattle())
             {
                 return;
@@ -298,135 +309,68 @@ namespace TurnBasedBattle.Presentation
             RenderAll();
         }
 
-        private void EnsureCurrentBattleFinishedWithoutPresentation()
+        private void ReplayNextRound()
         {
-            if (_currentSession == null || _currentSession.Runtime.IsFinished)
+            if (_replayController == null || _replayController.IsFinished)
             {
+                ApplyPhase(BattlePhase.ReplayFinished);
+                RenderAll();
                 return;
             }
 
-            if (_battleRandom == null)
-            {
-                _battleRandom = new DotNetRandom(_currentSession.InitialRandomSeed);
-            }
+            ApplyPhase(BattlePhase.ReplayPlaying);
 
-            _battleSimulator.ResolveUntilFinished(_currentSession, _battleRandom);
+            IReadOnlyList<BattleEvent> events = _replayController.PlayNextRound();
+            AddEventLogs(events);
+
+            ApplyPhase(_replayController.IsFinished
+                ? BattlePhase.ReplayFinished
+                : BattlePhase.ReplayReady);
+
+            RenderAll();
         }
 
-        private BattleSaveResult SaveCompletedCurrentBattleWithoutUiLog()
+        private void ReplayToEnd()
         {
-            if (_currentSession == null)
+            if (!_isReplayMode || _replayController == null)
             {
-                throw new InvalidOperationException("Cannot save because current session is null.");
+                return;
             }
 
-            if (_currentSession.IsSaved && _currentSession.SavedBattleRunId.HasValue)
-            {
-                return new BattleSaveResult(
-                    _currentSession.SavedBattleRunId.Value,
-                    DateTime.Now,
-                    Path.Combine(UnityEngine.Application.persistentDataPath, DatabaseFileName));
-            }
+            ApplyPhase(BattlePhase.ReplayPlaying);
 
-            BattleSaveResult result = _persistenceService.SaveCompletedBattle(_currentSession);
-            _currentSession.MarkSaved(result.BattleRunId);
+            IReadOnlyList<BattleEvent> events = _replayController.PlayToEnd();
+            AddEventLogs(events);
 
-            Debug.Log(
-                $"[BattleSceneController] Battle saved. " +
-                $"BattleRunId={result.BattleRunId}, DatabasePath={result.DatabasePath}"
-            );
-
-            return result;
+            ApplyPhase(BattlePhase.ReplayFinished);
+            RenderAll();
         }
 
-        private void SaveFinishedBattleWithUiFeedback()
+        private void ReplayCurrentBattle()
         {
-            if (_currentSession == null)
+            if (_isReplayMode)
             {
+                if (_activeReplayBattleRunId.HasValue)
+                {
+                    LoadReplayByBattleRunId(_activeReplayBattleRunId.Value);
+                }
+
                 return;
             }
 
-            if (_currentSession.IsSaved)
+            if (_currentSession == null ||
+                !_currentSession.IsSaved ||
+                !_currentSession.SavedBattleRunId.HasValue)
             {
-                return;
-            }
-
-            ApplyPhase(BattlePhase.Saving);
-
-            if (battleLogView != null)
-            {
-                battleLogView.AddLine(_logFormatter.FormatSaving());
-            }
-
-            try
-            {
-                BattleSaveResult result = SaveCompletedCurrentBattleWithoutUiLog();
-
                 if (battleLogView != null)
                 {
-                    battleLogView.AddLine(_logFormatter.FormatSaved(result.SavedAt));
+                    battleLogView.AddLine("目前沒有可重播的已儲存本場戰鬥。");
                 }
-            }
-            catch (Exception exception)
-            {
-                Debug.LogError($"[BattleSceneController] Failed to save completed battle.\n{exception}");
 
-                if (battleLogView != null)
-                {
-                    battleLogView.AddLine(_logFormatter.FormatSaveFailed());
-                }
-            }
-        }
-
-        private bool CanResolveBattle()
-        {
-            if (_currentSession == null)
-            {
-                Debug.LogWarning("[BattleSceneController] Cannot resolve battle because current session is null.");
-                return false;
-            }
-
-            if (_battleRandom == null)
-            {
-                Debug.LogWarning("[BattleSceneController] Cannot resolve battle because random generator is null.");
-                return false;
-            }
-
-            if (_currentSession.Runtime.IsFinished)
-            {
-                return false;
-            }
-
-            return true;
-        }
-
-        private void AddEventLogs(IEnumerable<BattleEvent> events)
-        {
-            if (battleLogView == null || events == null)
-            {
                 return;
             }
 
-            foreach (BattleEvent battleEvent in events)
-            {
-                battleLogView.AddLine(_logFormatter.FormatEvent(battleEvent));
-            }
-        }
-
-        private void ShowAiNotImplementedLog()
-        {
-            if (battleLogView != null)
-            {
-                battleLogView.AddLine("AI 建議左隊配置功能尚未實作。");
-            }
-        }
-
-        private void ShowReplayNotImplementedLog()
-        {
-            if (battleLogView != null)
-            {
-                battleLogView.AddLine("回放功能尚未實作。");
-            }
+            LoadReplayByBattleRunId(_currentSession.SavedBattleRunId.Value);
         }
 
         private void OpenReplayHistoryList()
@@ -480,14 +424,7 @@ namespace TurnBasedBattle.Presentation
                 loadListModalView.Hide();
             }
 
-            if (battleLogView != null)
-            {
-                battleLogView.Clear();
-                battleLogView.AddLine($"已選擇紀錄 {record.CreatedAtText}；Replay 載入功能尚未實作。");
-            }
-
-            ApplyPhase(_phaseBeforeLoadList);
-            RenderAll();
+            LoadReplayByBattleRunId(record.BattleRunId);
         }
 
         private void HandleReplayHistoryCancelled()
@@ -499,6 +436,154 @@ namespace TurnBasedBattle.Presentation
 
             ApplyPhase(_phaseBeforeLoadList);
             RenderAll();
+        }
+
+        private void LoadReplayByBattleRunId(long battleRunId)
+        {
+            try
+            {
+                BattleReplayPayload payload = _replayQueryService.LoadReplay(battleRunId);
+
+                _replayController = new ReplayController(payload);
+                _currentSession = _replayController.Session;
+                _battleRandom = null;
+                _isReplayMode = true;
+                _activeReplayBattleRunId = battleRunId;
+
+                if (battleLogView != null)
+                {
+                    battleLogView.Clear();
+                    battleLogView.AddLine($"已載入紀錄 {payload.CreatedAtText}。");
+                }
+
+                ApplyPhase(BattlePhase.ReplayReady);
+                RenderAll();
+            }
+            catch (Exception exception)
+            {
+                Debug.LogError($"[BattleSceneController] Failed to load replay. BattleRunId={battleRunId}\n{exception}");
+
+                if (battleLogView != null)
+                {
+                    battleLogView.AddLine("載入回放紀錄失敗；詳細錯誤請查看 Console。");
+                }
+
+                ApplyPhase(_phaseBeforeLoadList);
+                RenderAll();
+            }
+        }
+
+        private void EnsureCurrentBattleFinishedWithoutPresentation()
+        {
+            if (_currentSession == null || _currentSession.Runtime.IsFinished)
+            {
+                return;
+            }
+
+            if (_battleRandom == null)
+            {
+                _battleRandom = new DotNetRandom(_currentSession.InitialRandomSeed);
+            }
+
+            _battleSimulator.ResolveUntilFinished(_currentSession, _battleRandom);
+        }
+
+        private BattleSaveResult SaveCompletedCurrentBattleWithoutUiLog()
+        {
+            if (_currentSession == null)
+            {
+                throw new InvalidOperationException("Cannot save because current session is null.");
+            }
+
+            if (_currentSession.IsSaved && _currentSession.SavedBattleRunId.HasValue)
+            {
+                return new BattleSaveResult(
+                    _currentSession.SavedBattleRunId.Value,
+                    DateTime.Now,
+                    Path.Combine(UnityEngine.Application.persistentDataPath, DatabaseFileName));
+            }
+
+            BattleSaveResult result = _persistenceService.SaveCompletedBattle(_currentSession);
+            _currentSession.MarkSaved(result.BattleRunId);
+
+            Debug.Log(
+                $"[BattleSceneController] Battle saved. " +
+                $"BattleRunId={result.BattleRunId}, DatabasePath={result.DatabasePath}"
+            );
+
+            return result;
+        }
+
+        private void SaveFinishedBattleWithUiFeedback()
+        {
+            if (_isReplayMode || _currentSession == null || _currentSession.IsSaved)
+            {
+                return;
+            }
+
+            ApplyPhase(BattlePhase.Saving);
+
+            if (battleLogView != null)
+            {
+                battleLogView.AddLine(_logFormatter.FormatSaving());
+            }
+
+            try
+            {
+                BattleSaveResult result = SaveCompletedCurrentBattleWithoutUiLog();
+
+                if (battleLogView != null)
+                {
+                    battleLogView.AddLine(_logFormatter.FormatSaved(result.SavedAt));
+                }
+            }
+            catch (Exception exception)
+            {
+                Debug.LogError($"[BattleSceneController] Failed to save completed battle.\n{exception}");
+
+                if (battleLogView != null)
+                {
+                    battleLogView.AddLine(_logFormatter.FormatSaveFailed());
+                }
+            }
+        }
+
+        private bool CanResolveBattle()
+        {
+            if (_currentSession == null)
+            {
+                Debug.LogWarning("[BattleSceneController] Cannot resolve battle because current session is null.");
+                return false;
+            }
+
+            if (_battleRandom == null)
+            {
+                Debug.LogWarning("[BattleSceneController] Cannot resolve battle because random generator is null.");
+                return false;
+            }
+
+            return !_currentSession.Runtime.IsFinished;
+        }
+
+        private void AddEventLogs(IEnumerable<BattleEvent> events)
+        {
+            if (battleLogView == null || events == null)
+            {
+                return;
+            }
+
+            foreach (BattleEvent battleEvent in events)
+            {
+                battleLogView.AddLine(_logFormatter.FormatEvent(battleEvent));
+            }
+        }
+
+        private void ShowAiNotImplementedLog()
+        {
+            if (battleLogView != null)
+            {
+                battleLogView.AddLine("AI 建議左隊配置功能尚未實作。");
+            }
         }
 
         private void ApplyPhase(BattlePhase phase)
@@ -579,15 +664,10 @@ namespace TurnBasedBattle.Presentation
                 return;
             }
 
-            bool isReplayMode =
-                _currentPhase == BattlePhase.ReplayReady ||
-                _currentPhase == BattlePhase.ReplayPlaying ||
-                _currentPhase == BattlePhase.ReplayFinished;
-
             BattleMetrics metrics = _metricsCalculator.Calculate(
                 _currentSession,
                 _currentPhase,
-                isReplayMode);
+                _isReplayMode);
 
             battleMetricsView.Render(metrics);
         }

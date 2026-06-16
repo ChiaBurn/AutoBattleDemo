@@ -96,6 +96,15 @@ namespace TurnBasedBattle.Domain
         }
 
         /// <summary>
+        /// Directly sets current HP from persisted replay data.
+        /// This must be used only by replay reconstruction, not by normal battle simulation.
+        /// </summary>
+        public void SetCurrentHpForReplay(int currentHp)
+        {
+            CurrentHp = ClampHp(currentHp);
+        }
+
+        /// <summary>
         /// Updates the slot index when a team order is changed.
         /// This should be used only before battle starts or when rebuilding runtime data.
         /// </summary>
