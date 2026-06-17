@@ -54,6 +54,7 @@ namespace TurnBasedBattle.Domain
 
         ReplayReady = 100,
         ReplayPlaying = 110,
+        ReplayAutoPlaying = 115,
         ReplayFinished = 120
     }
 }

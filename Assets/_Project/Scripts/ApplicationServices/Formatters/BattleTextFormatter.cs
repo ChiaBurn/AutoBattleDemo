@@ -70,6 +70,7 @@ namespace TurnBasedBattle.ApplicationServices.Formatters
                 BattlePhase.LoadList => "選擇回放紀錄",
                 BattlePhase.ReplayReady => "回放準備中",
                 BattlePhase.ReplayPlaying => "播放中",
+                BattlePhase.ReplayAutoPlaying => "快速播放中",
                 BattlePhase.ReplayFinished => "回放結束",
                 _ => throw new ArgumentOutOfRangeException(nameof(phase), phase, "Unsupported battle phase.")
             };

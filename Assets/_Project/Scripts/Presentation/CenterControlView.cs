@@ -8,6 +8,13 @@ namespace TurnBasedBattle.Presentation
 {
     /// <summary>
     /// View component for the center control area between both teams.
+    ///
+    /// Responsibilities:
+    /// 1. Control center button visibility.
+    /// 2. Control winner / replay-finished text.
+    /// 3. Display the skip button only during skippable fast-forward phases.
+    ///
+    /// This class does not own battle rules, replay logic, AI logic, or persistence logic.
     /// </summary>
     public sealed class CenterControlView : MonoBehaviour
     {
@@ -15,10 +22,12 @@ namespace TurnBasedBattle.Presentation
         [SerializeField] private Button nextRoundButton;
         [SerializeField] private TMP_Text winnerText;
         [SerializeField] private Button replayCurrentButton;
+        [SerializeField] private Button skipAnimationButton;
 
         public Button AiSuggestButton => aiSuggestButton;
         public Button NextRoundButton => nextRoundButton;
         public Button ReplayCurrentButton => replayCurrentButton;
+        public Button SkipAnimationButton => skipAnimationButton;
 
         public void ApplyPhase(BattlePhase phase, BattleResult result)
         {
@@ -29,10 +38,23 @@ namespace TurnBasedBattle.Presentation
                 case BattlePhase.BattleReady:
                     Show(aiSuggestButton, true);
                     Show(nextRoundButton, true);
+                    SetButtonText(nextRoundButton, "下一回合");
                     break;
 
                 case BattlePhase.BattleInProgress:
                     Show(nextRoundButton, true);
+                    SetButtonText(nextRoundButton, "下一回合");
+                    break;
+
+                case BattlePhase.BattleResolvingRound:
+                    // Normal next-round animation.
+                    // No skip button; this mode is intentionally readable.
+                    break;
+
+                case BattlePhase.BattleAutoResolving:
+                    // Fast-forward battle-to-end animation.
+                    // Skip is allowed here.
+                    Show(skipAnimationButton, true);
                     break;
 
                 case BattlePhase.ReplayReady:
@@ -40,9 +62,21 @@ namespace TurnBasedBattle.Presentation
                     SetButtonText(nextRoundButton, "播放下一回合");
                     break;
 
+                case BattlePhase.ReplayPlaying:
+                    // Normal replay-next-round animation.
+                    // No skip button; this mode is intentionally readable.
+                    break;
+
+                case BattlePhase.ReplayAutoPlaying:
+                    // Fast-forward replay-to-end animation.
+                    // Skip is allowed here.
+                    Show(skipAnimationButton, true);
+                    break;
+
                 case BattlePhase.FinishedSaved:
                     ShowWinner(result);
                     Show(replayCurrentButton, true);
+                    SetButtonText(replayCurrentButton, "重播本場");
                     break;
 
                 case BattlePhase.ReplayFinished:
@@ -51,25 +85,12 @@ namespace TurnBasedBattle.Presentation
                     SetButtonText(replayCurrentButton, "重播本紀錄");
                     break;
 
+                case BattlePhase.NotStarted:
                 case BattlePhase.AiRunning:
                 case BattlePhase.AiResult:
-                case BattlePhase.BattleResolvingRound:
-                case BattlePhase.BattleAutoResolving:
                 case BattlePhase.Saving:
                 case BattlePhase.LoadList:
-                case BattlePhase.NotStarted:
-                case BattlePhase.ReplayPlaying:
                     break;
-            }
-
-            if (phase != BattlePhase.ReplayReady)
-            {
-                SetButtonText(nextRoundButton, "下一回合");
-            }
-
-            if (phase != BattlePhase.ReplayFinished)
-            {
-                SetButtonText(replayCurrentButton, "重播本場");
             }
         }
 
@@ -100,6 +121,7 @@ namespace TurnBasedBattle.Presentation
             Hide(aiSuggestButton);
             Hide(nextRoundButton);
             Hide(replayCurrentButton);
+            Hide(skipAnimationButton);
 
             if (winnerText != null)
             {
@@ -136,6 +158,7 @@ namespace TurnBasedBattle.Presentation
             }
 
             TMP_Text buttonText = button.GetComponentInChildren<TMP_Text>(includeInactive: true);
+
             if (buttonText != null)
             {
                 buttonText.text = text;
