@@ -35,7 +35,7 @@ namespace TurnBasedBattle.ApplicationServices.Formatters
 
             if (battleEvent.WinnerAfterEvent != BattleResult.None)
             {
-                message += Environment.NewLine + FormatWinnerLine(battleEvent.WinnerAfterEvent);
+                message += FormatWinnerLine(battleEvent.WinnerAfterEvent);
             }
 
             return message;
