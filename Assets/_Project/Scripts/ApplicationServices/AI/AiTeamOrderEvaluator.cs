@@ -2,9 +2,9 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
+using System.Threading;
 using DotNetRandom = System.Random;
 using TurnBasedBattle.ApplicationServices.Factories;
-using TurnBasedBattle.ApplicationServices.Simulation;
 using TurnBasedBattle.Domain;
 
 namespace TurnBasedBattle.ApplicationServices.AI
@@ -12,7 +12,13 @@ namespace TurnBasedBattle.ApplicationServices.AI
     /// <summary>
     /// Evaluates all 24 possible left-team class orders against a fixed right-team order.
     ///
-    /// This is pure C# and does not depend on UnityEngine.
+    /// This class is pure C# and does not depend on UnityEngine.
+    /// It is safe to execute on a background thread.
+    ///
+    /// Current optimization:
+    /// - Uses FastBattleOutcomeSimulator.
+    /// - Does not generate BattleEvent during AI simulations.
+    /// - Keeps common-random-numbers comparison for lower variance.
     /// </summary>
     public sealed class AiTeamOrderEvaluator
     {
@@ -25,25 +31,38 @@ namespace TurnBasedBattle.ApplicationServices.AI
         };
 
         private readonly BattleSessionFactory _sessionFactory;
-        private readonly BattleSimulator _battleSimulator;
+        private readonly FastBattleOutcomeSimulator _fastBattleOutcomeSimulator;
 
         public AiTeamOrderEvaluator()
-            : this(new BattleSessionFactory(), new BattleSimulator())
+            : this(new BattleSessionFactory(), new FastBattleOutcomeSimulator())
         {
         }
 
         public AiTeamOrderEvaluator(
             BattleSessionFactory sessionFactory,
-            BattleSimulator battleSimulator)
+            FastBattleOutcomeSimulator fastBattleOutcomeSimulator)
         {
             _sessionFactory = sessionFactory ?? throw new ArgumentNullException(nameof(sessionFactory));
-            _battleSimulator = battleSimulator ?? throw new ArgumentNullException(nameof(battleSimulator));
+            _fastBattleOutcomeSimulator = fastBattleOutcomeSimulator ?? throw new ArgumentNullException(nameof(fastBattleOutcomeSimulator));
         }
 
         public AiEvaluationResult EvaluateBestLeftOrder(
             IReadOnlyList<CharacterClass> fixedRightOrder,
             int simulationCountPerOrder,
             int baseSeed)
+        {
+            return EvaluateBestLeftOrderSequential(
+                fixedRightOrder,
+                simulationCountPerOrder,
+                baseSeed,
+                CancellationToken.None);
+        }
+
+        public AiEvaluationResult EvaluateBestLeftOrderSequential(
+            IReadOnlyList<CharacterClass> fixedRightOrder,
+            int simulationCountPerOrder,
+            int baseSeed,
+            CancellationToken cancellationToken)
         {
             if (fixedRightOrder == null)
             {
@@ -52,29 +71,38 @@ namespace TurnBasedBattle.ApplicationServices.AI
 
             if (fixedRightOrder.Count != 4)
             {
-                throw new ArgumentException("Right order must contain exactly 4 classes.", nameof(fixedRightOrder));
+                throw new ArgumentException(
+                    "Right order must contain exactly 4 classes.",
+                    nameof(fixedRightOrder));
             }
 
             if (simulationCountPerOrder <= 0)
             {
-                throw new ArgumentOutOfRangeException(nameof(simulationCountPerOrder), "Simulation count per order must be greater than 0.");
+                throw new ArgumentOutOfRangeException(
+                    nameof(simulationCountPerOrder),
+                    "Simulation count per order must be greater than 0.");
             }
 
             Stopwatch stopwatch = Stopwatch.StartNew();
 
-            List<IReadOnlyList<CharacterClass>> candidateOrders = GeneratePermutations(AllClasses).ToList();
+            List<IReadOnlyList<CharacterClass>> candidateOrders =
+                GeneratePermutations(AllClasses).ToList();
 
             IReadOnlyList<CharacterClass> bestOrder = candidateOrders[0];
             int bestWinCount = -1;
 
             for (int orderIndex = 0; orderIndex < candidateOrders.Count; orderIndex++)
             {
+                cancellationToken.ThrowIfCancellationRequested();
+
                 IReadOnlyList<CharacterClass> candidateOrder = candidateOrders[orderIndex];
+
                 int winCount = EvaluateOneOrder(
                     candidateOrder,
                     fixedRightOrder,
                     simulationCountPerOrder,
-                    baseSeed);
+                    baseSeed,
+                    cancellationToken);
 
                 if (winCount > bestWinCount)
                 {
@@ -102,12 +130,15 @@ namespace TurnBasedBattle.ApplicationServices.AI
             IReadOnlyList<CharacterClass> leftOrder,
             IReadOnlyList<CharacterClass> rightOrder,
             int simulationCount,
-            int baseSeed)
+            int baseSeed,
+            CancellationToken cancellationToken)
         {
             int leftWinCount = 0;
 
             for (int simulationIndex = 0; simulationIndex < simulationCount; simulationIndex++)
             {
+                cancellationToken.ThrowIfCancellationRequested();
+
                 int simulationSeed = CreateSimulationSeed(baseSeed, simulationIndex);
 
                 BattleSession session = _sessionFactory.CreateBattleFromOrders(
@@ -116,9 +147,12 @@ namespace TurnBasedBattle.ApplicationServices.AI
                     simulationSeed);
 
                 DotNetRandom random = new DotNetRandom(simulationSeed);
-                _battleSimulator.ResolveUntilFinished(session, random);
 
-                if (session.Runtime.Result == BattleResult.LeftWin)
+                BattleResult result = _fastBattleOutcomeSimulator.ResolveUntilFinished(
+                    session,
+                    random);
+
+                if (result == BattleResult.LeftWin)
                 {
                     leftWinCount++;
                 }
@@ -159,7 +193,8 @@ namespace TurnBasedBattle.ApplicationServices.AI
             {
                 Swap(buffer, startIndex, i);
 
-                foreach (IReadOnlyList<CharacterClass> permutation in GeneratePermutationsRecursive(buffer, startIndex + 1))
+                foreach (IReadOnlyList<CharacterClass> permutation in
+                         GeneratePermutationsRecursive(buffer, startIndex + 1))
                 {
                     yield return permutation;
                 }

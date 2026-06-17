@@ -3,6 +3,8 @@ using System.Collections;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Threading;
+using System.Threading.Tasks;
 using DotNetRandom = System.Random;
 using TurnBasedBattle.ApplicationServices.AI;
 using TurnBasedBattle.ApplicationServices.Calculators;
@@ -31,11 +33,16 @@ namespace TurnBasedBattle.Presentation
     /// - To end: fast-forward event-by-event presentation, skippable.
     /// - Replay next round: normal event-by-event presentation.
     /// - Replay to end: fast-forward event-by-event presentation, skippable.
+    ///
+    /// AI behavior:
+    /// - AI evaluation runs on background threads via Task.Run.
+    /// - The pure C# evaluator may use Parallel.For internally.
+    /// - Unity UI is touched only on the Unity main thread.
     /// </summary>
     public sealed class BattleSceneController : MonoBehaviour
     {
         private const string DatabaseFileName = "battle_runs.db";
-        private const int AiSimulationCountPerOrder = 1000;
+        private const int AiSimulationCountPerOrder = 2000;
 
         private const float NormalActionAnimationDelaySeconds = 0.5f;
         private const float FastForwardActionAnimationDelaySeconds = 0.1f;
@@ -77,9 +84,11 @@ namespace TurnBasedBattle.Presentation
 
         private bool _isReplayMode;
         private bool _skipAnimationRequested;
+        private bool _isDestroying;
 
         private long? _activeReplayBattleRunId;
         private AiEvaluationResult _latestAiEvaluationResult;
+        private CancellationTokenSource _aiEvaluationCancellationTokenSource;
 
         private void Awake()
         {
@@ -98,6 +107,8 @@ namespace TurnBasedBattle.Presentation
 
         private void OnDestroy()
         {
+            _isDestroying = true;
+            CancelActiveAiEvaluation();
             UnbindButtonEvents();
         }
 
@@ -252,6 +263,8 @@ namespace TurnBasedBattle.Presentation
                 return;
             }
 
+            CancelActiveAiEvaluation();
+
             _isReplayMode = false;
             _replayController = null;
             _activeReplayBattleRunId = null;
@@ -278,6 +291,8 @@ namespace TurnBasedBattle.Presentation
             {
                 return;
             }
+
+            CancelActiveAiEvaluation();
 
             if (_isReplayMode)
             {
@@ -615,6 +630,8 @@ namespace TurnBasedBattle.Presentation
                 return;
             }
 
+            CancelActiveAiEvaluation();
+
             if (_isReplayMode)
             {
                 if (_activeReplayBattleRunId.HasValue)
@@ -646,6 +663,8 @@ namespace TurnBasedBattle.Presentation
             {
                 return;
             }
+
+            CancelActiveAiEvaluation();
 
             if (_historyQueryService == null)
             {
@@ -717,6 +736,8 @@ namespace TurnBasedBattle.Presentation
                 return;
             }
 
+            CancelActiveAiEvaluation();
+
             try
             {
                 BattleReplayPayload payload = _replayQueryService.LoadReplay(battleRunId);
@@ -752,9 +773,14 @@ namespace TurnBasedBattle.Presentation
             }
         }
 
-        private void StartAiSuggestion()
+        private async void StartAiSuggestion()
         {
             if (_activeBattleAnimationCoroutine != null)
+            {
+                return;
+            }
+
+            if (_aiEvaluationCancellationTokenSource != null)
             {
                 return;
             }
@@ -784,15 +810,13 @@ namespace TurnBasedBattle.Presentation
                 return;
             }
 
-            StartCoroutine(RunAiSuggestionCoroutine());
-        }
+            _aiEvaluationCancellationTokenSource = new CancellationTokenSource();
+            CancellationToken cancellationToken = _aiEvaluationCancellationTokenSource.Token;
 
-        private IEnumerator RunAiSuggestionCoroutine()
-        {
             ApplyPhase(BattlePhase.AiRunning);
             aiSuggestionModalView.ShowRunning();
 
-            yield return null;
+            await Task.Yield();
 
             try
             {
@@ -802,20 +826,50 @@ namespace TurnBasedBattle.Presentation
 
                 int baseSeed = unchecked(_currentSession.InitialRandomSeed ^ Environment.TickCount);
 
-                _latestAiEvaluationResult = _aiTeamOrderEvaluator.EvaluateBestLeftOrder(
-                    rightOrder,
-                    AiSimulationCountPerOrder,
-                    baseSeed);
+                AiEvaluationResult result = await Task.Run(
+                    () => _aiTeamOrderEvaluator.EvaluateBestLeftOrderSequential(
+                        rightOrder,
+                        AiSimulationCountPerOrder,
+                        baseSeed,
+                        cancellationToken),
+                    cancellationToken);
+
+                if (_isDestroying || cancellationToken.IsCancellationRequested)
+                {
+                    return;
+                }
+
+                _latestAiEvaluationResult = result;
 
                 aiSuggestionModalView.ShowResult(_latestAiEvaluationResult);
                 ApplyPhase(BattlePhase.AiResult);
+                RenderAll();
+            }
+            catch (OperationCanceledException)
+            {
+                _latestAiEvaluationResult = null;
+
+                if (!_isDestroying)
+                {
+                    if (aiSuggestionModalView != null)
+                    {
+                        aiSuggestionModalView.Hide();
+                    }
+
+                    ApplyPhase(BattlePhase.BattleReady);
+                    RenderAll();
+                }
             }
             catch (Exception exception)
             {
                 Debug.LogError($"[BattleSceneController] AI evaluation failed.\n{exception}");
 
                 _latestAiEvaluationResult = null;
-                aiSuggestionModalView.Hide();
+
+                if (aiSuggestionModalView != null)
+                {
+                    aiSuggestionModalView.Hide();
+                }
 
                 if (battleLogView != null)
                 {
@@ -824,6 +878,14 @@ namespace TurnBasedBattle.Presentation
 
                 ApplyPhase(BattlePhase.BattleReady);
                 RenderAll();
+            }
+            finally
+            {
+                if (_aiEvaluationCancellationTokenSource != null)
+                {
+                    _aiEvaluationCancellationTokenSource.Dispose();
+                    _aiEvaluationCancellationTokenSource = null;
+                }
             }
         }
 
@@ -856,7 +918,10 @@ namespace TurnBasedBattle.Presentation
             _replayController = null;
             _activeReplayBattleRunId = null;
 
-            aiSuggestionModalView.Hide();
+            if (aiSuggestionModalView != null)
+            {
+                aiSuggestionModalView.Hide();
+            }
 
             if (battleLogView != null)
             {
@@ -872,6 +937,7 @@ namespace TurnBasedBattle.Presentation
 
         private void CancelAiSuggestion()
         {
+            CancelActiveAiEvaluation();
             _latestAiEvaluationResult = null;
 
             if (aiSuggestionModalView != null)
@@ -881,6 +947,19 @@ namespace TurnBasedBattle.Presentation
 
             ApplyPhase(BattlePhase.BattleReady);
             RenderAll();
+        }
+
+        private void CancelActiveAiEvaluation()
+        {
+            if (_aiEvaluationCancellationTokenSource == null)
+            {
+                return;
+            }
+
+            if (!_aiEvaluationCancellationTokenSource.IsCancellationRequested)
+            {
+                _aiEvaluationCancellationTokenSource.Cancel();
+            }
         }
 
         private void EnsureCurrentBattleFinishedWithoutPresentation()
